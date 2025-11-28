@@ -3,6 +3,8 @@
 import type React from "react"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
+import { useAuth } from "@/components/auth-context"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -21,6 +23,8 @@ export default function SignupPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
   const [passwordStrength, setPasswordStrength] = useState<"weak" | "medium" | "strong">("weak")
+  const router = useRouter()
+  const { signup } = useAuth()
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
@@ -56,13 +60,10 @@ export default function SignupPage() {
     setIsLoading(true)
 
     try {
-      // Placeholder: Replace with actual API call
-      console.log("[v0] Signup attempt:", formData)
-      // Simulate API delay
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-      // TODO: Add actual registration logic
-    } catch (err) {
-      setError("Failed to create account")
+      await signup(formData.fullName, formData.email, formData.schoolName, formData.password)
+      router.push("/")
+    } catch (err: any) {
+      setError(err?.message || "Failed to create account")
     } finally {
       setIsLoading(false)
     }

@@ -17,10 +17,12 @@ export function Sidebar() {
   const links = [
     { href: "/", label: "Dashboard", icon: Home },
     { href: "/attendance", label: "Attendance", icon: Users },
+    { href: "/students", label: "Students", icon: Users },
     { href: "/air-quality", label: "Air Quality", icon: Wind },
     { href: "/devices", label: "Devices", icon: Cpu },
     { href: "/reports", label: "Reports", icon: FileText },
-  ]
+      ...(user?.role === 'ADMIN' ? [{ href: "/admin", label: "Admin", icon: BarChart3 }] : []),
+    ]
 
   const handleLogout = () => {
     logout()
@@ -74,7 +76,7 @@ export function Sidebar() {
           </div>
           <div className="text-sm min-w-0">
             <p className="font-medium truncate">{user?.fullName || "User"}</p>
-            <p className="text-xs opacity-70 truncate">{user?.role || "Staff"}</p>
+            <p className="text-xs opacity-70 truncate">{user?.role || "STAFF"}</p>
           </div>
         </div>
 

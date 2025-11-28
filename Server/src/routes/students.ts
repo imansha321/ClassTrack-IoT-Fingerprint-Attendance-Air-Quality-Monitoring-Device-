@@ -34,6 +34,19 @@ router.get('/', authenticateToken, async (req: Request, res: Response) => {
   }
 });
 
+// Get student by id
+router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const student = await prisma.student.findUnique({ where: { id } });
+    if (!student) return res.status(404).json({ error: 'Student not found' });
+    res.json(student);
+  } catch (error) {
+    console.error('Get student error:', error);
+    res.status(500).json({ error: 'Failed to fetch student' });
+  }
+});
+
 // Create student
 router.post(
   '/',

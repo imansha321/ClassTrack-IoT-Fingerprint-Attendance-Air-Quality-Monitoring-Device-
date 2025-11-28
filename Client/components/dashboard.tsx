@@ -29,40 +29,50 @@ import {
   AlertTriangle,
 } from "lucide-react"
 import { Sidebar } from "./sidebar"
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { DashboardAPI, AlertsAPI, DevicesAPI } from "@/lib/api"
 
-const attendanceData = [
-  { date: "Mon", present: 280, absent: 45, late: 12 },
-  { date: "Tue", present: 295, absent: 28, late: 8 },
-  { date: "Wed", present: 290, absent: 35, late: 10 },
-  { date: "Thu", present: 305, absent: 18, late: 5 },
-  { date: "Fri", present: 288, absent: 40, late: 15 },
-]
-
-const airQualityData = [
-  { time: "08:00", pm25: 25, co2: 420, temp: 22.5, humidity: 45 },
-  { time: "10:00", pm25: 38, co2: 580, temp: 23.1, humidity: 48 },
-  { time: "12:00", pm25: 52, co2: 720, temp: 24.2, humidity: 52 },
-  { time: "14:00", pm25: 48, co2: 680, temp: 24.8, humidity: 50 },
-  { time: "16:00", pm25: 35, co2: 550, temp: 23.9, humidity: 47 },
-]
-
-const attendanceBreakdown = [
-  { name: "Present", value: 1247, color: "hsl(var(--chart-2))" },
-  { name: "Absent", value: 150, color: "hsl(var(--chart-4))" },
-  { name: "Late", value: 48, color: "hsl(var(--chart-3))" },
-]
-
-const deviceStatus = [
-  { id: "ESP32-Lab-01", room: "Lab", battery: 95, signal: 5, status: "Online", lastSeen: "Just now" },
-  { id: "ESP32-Class-02", room: "101", battery: 78, signal: 4, status: "Online", lastSeen: "Just now" },
-  { id: "ESP32-Class-03", room: "102", battery: 45, signal: 3, status: "Online", lastSeen: "2 min ago" },
-  { id: "ESP32-Class-04", room: "103", battery: 92, signal: 5, status: "Online", lastSeen: "Just now" },
-]
+const emptyWeek = ["Mon","Tue","Wed","Thu","Fri"].map(d => ({ date: d, present: 0, absent: 0, late: 0 }))
 
 export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState<any>(null)
+  const [weekly, setWeekly] = useState<any[]>([])
+  const [classrooms, setClassrooms] = useState<any[]>([])
+  const [alerts, setAlerts] = useState<any[]>([])
+  const [devices, setDevices] = useState<any[]>([])
+
+  const load = async () => {
+    try {
+      setLoading(true)
+      const [s, w, c, a, d] = await Promise.all([
+        DashboardAPI.stats(),
+        DashboardAPI.weeklyAttendance(),
+        DashboardAPI.classrooms(),
+        AlertsAPI.list({ resolved: false }),
+        DevicesAPI.list({ status: 'all' }),
+      ])
+      setStats(s)
+      setWeekly(w)
+      setClassrooms(c)
+      setAlerts(a)
+      setDevices(d)
+    } catch (e) {
+      // leave fallbacks
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    load()
+    if (autoRefresh) {
+      const t = setInterval(load, 30000)
+      return () => clearInterval(t)
+    }
+  }, [autoRefresh])
 
   return (
     <div className="pt-20 lg:pt-0">
@@ -99,8 +109,8 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard
             title="Total Students"
-            value="1,247"
-            subtitle="Present today"
+            value={stats?.attendance?.total?.toString() ?? "0"}
+            subtitle={`Present today: ${stats?.attendance?.present ?? 0}`}
             icon={Users}
             trend="+12%"
             color="primary"
@@ -109,7 +119,7 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
           />
           <MetricCard
             title="Present Rate"
-            value="94.2%"
+            value={`${stats?.attendance?.presentRate ?? '0.0'}%`}
             subtitle="School average"
             icon={TrendingUp}
             trend="+2.3%"
@@ -119,8 +129,8 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
           />
           <MetricCard
             title="Air Quality"
-            value="Moderate"
-            subtitle="PM2.5: 48 µg/m³"
+            value={stats?.airQuality ? (stats.airQuality.pm25 < 35 && stats.airQuality.co2 < 750 ? 'Good' : 'Moderate') : 'Unknown'}
+            subtitle={stats?.airQuality ? `PM2.5: ${stats.airQuality.pm25.toFixed(1)} µg/m³` : '—'}
             icon={Wind}
             trend="⚠️"
             color="accent"
@@ -129,8 +139,8 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
           />
           <MetricCard
             title="Active Devices"
-            value="42"
-            subtitle="All online"
+            value={(stats?.devices?.total ?? 0).toString()}
+            subtitle={`${stats?.devices?.online ?? 0} online`}
             icon={AlertCircle}
             trend="✓"
             color="primary"
@@ -155,7 +165,7 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
                 className="h-48 md:h-64"
               >
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={attendanceData}>
+                  <BarChart data={(weekly && weekly.length ? weekly.map((d: any) => ({ date: d.day, present: d.present, absent: d.absent, late: d.late })) : emptyWeek)}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                     <XAxis dataKey="date" />
                     <YAxis />
@@ -180,7 +190,11 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
-                      data={attendanceBreakdown}
+                      data={stats ? [
+                        { name: 'Present', value: stats.attendance.present, color: 'hsl(var(--chart-2))' },
+                        { name: 'Absent', value: stats.attendance.absent, color: 'hsl(var(--chart-4))' },
+                        { name: 'Late', value: stats.attendance.late, color: 'hsl(var(--chart-3))' },
+                      ] : []}
                       cx="50%"
                       cy="50%"
                       innerRadius={60}
@@ -188,7 +202,11 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
                       paddingAngle={2}
                       dataKey="value"
                     >
-                      {attendanceBreakdown.map((entry, index) => (
+                      {(stats ? [
+                        { name: 'Present', value: stats.attendance.present, color: 'hsl(var(--chart-2))' },
+                        { name: 'Absent', value: stats.attendance.absent, color: 'hsl(var(--chart-4))' },
+                        { name: 'Late', value: stats.attendance.late, color: 'hsl(var(--chart-3))' },
+                      ] : []).map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
@@ -197,7 +215,11 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
                 </ResponsiveContainer>
               </ChartContainer>
               <div className="mt-4 space-y-2">
-                {attendanceBreakdown.map((item) => (
+                {(stats ? [
+                  { name: 'Present', value: stats.attendance.present },
+                  { name: 'Absent', value: stats.attendance.absent },
+                  { name: 'Late', value: stats.attendance.late },
+                ] : []).map((item) => (
                   <div key={item.name} className="flex justify-between text-xs md:text-sm">
                     <span className="text-muted-foreground">{item.name}</span>
                     <span className="font-medium">{item.value}</span>
@@ -222,7 +244,7 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
               className="h-48 md:h-80"
             >
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={airQualityData}>
+                <LineChart data={(stats?.airQuality ? [{ time: 'Now', pm25: stats.airQuality.pm25, co2: stats.airQuality.co2 }] : [])}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                   <XAxis dataKey="time" />
                   <YAxis yAxisId="left" />
@@ -260,11 +282,10 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-              {[
-                { room: "Room 101", occupancy: "42/45", airQuality: "Good", temp: "22.5°C", humidity: "45%" },
-                { room: "Room 102", occupancy: "38/40", airQuality: "Moderate", temp: "24.2°C", humidity: "52%" },
-                { room: "Room 103", occupancy: "40/42", airQuality: "Good", temp: "23.1°C", humidity: "48%" },
-              ].map((room) => (
+              {classrooms.length === 0 && (
+                <div className="text-xs md:text-sm text-muted-foreground">No classroom data available.</div>
+              )}
+              {(classrooms || []).map((room) => (
                 <div
                   key={room.room}
                   className="p-3 md:p-4 border border-border rounded-lg bg-card/50 hover:bg-card/70 transition-colors cursor-pointer"
@@ -273,19 +294,17 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
                   <div className="mt-3 space-y-2 text-xs md:text-sm">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Occupancy:</span>
-                      <span className="font-medium">{room.occupancy}</span>
+                      <span className="font-medium">{room.occupancy ?? '—'}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Air Quality:</span>
-                      <span className={`font-medium ${room.airQuality === "Good" ? "text-secondary" : "text-accent"}`}>
-                        {room.airQuality}
+                      <span className={`font-medium ${room.airQuality === "Good" ? "text-secondary" : room.airQuality === 'Moderate' ? 'text-accent' : 'text-destructive'}`}>
+                        {room.airQuality ?? '—'}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Temp/Humidity:</span>
-                      <span className="font-medium">
-                        {room.temp} / {room.humidity}
-                      </span>
+                      <span className="font-medium">{room.temp ?? '—'} / {room.humidity ?? '—'}</span>
                     </div>
                   </div>
                 </div>
@@ -318,30 +337,23 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
                   </tr>
                 </thead>
                 <tbody>
-                  {deviceStatus.map((device) => (
+                  {devices.length === 0 && (
+                    <tr><td colSpan={6} className="p-4 text-center text-xs text-muted-foreground">No devices found.</td></tr>
+                  )}
+                  {devices.map((device: any) => (
                     <tr key={device.id} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
-                      <td className="p-2 md:p-3 font-medium text-foreground">{device.id}</td>
-                      <td className="p-2 md:p-3 text-muted-foreground">{device.room}</td>
+                      <td className="p-2 md:p-3 font-medium text-foreground">{device.deviceId}</td>
+                      <td className="p-2 md:p-3 text-muted-foreground">{device.location}</td>
                       <td className="p-2 md:p-3">
                         <div className="flex items-center justify-center gap-1">
                           <Battery className="w-4 h-4 text-muted-foreground" />
-                          <span
-                            className={
-                              device.battery > 60
-                                ? "text-secondary"
-                                : device.battery > 30
-                                  ? "text-accent"
-                                  : "text-destructive"
-                            }
-                          >
-                            {device.battery}%
-                          </span>
+                          <span className={device.battery > 60 ? "text-secondary" : device.battery > 30 ? "text-accent" : "text-destructive"}>{device.battery}%</span>
                         </div>
                       </td>
                       <td className="p-2 md:p-3">
                         <div className="flex items-center justify-center gap-1">
                           <Wifi className="w-4 h-4 text-secondary" />
-                          <span>{device.signal}/5</span>
+                          <span>{Math.round((device.signal/20))}/5</span>
                         </div>
                       </td>
                       <td className="p-2 md:p-3">
@@ -350,7 +362,7 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
                           <span className="text-secondary font-medium">{device.status}</span>
                         </div>
                       </td>
-                      <td className="p-2 md:p-3 text-muted-foreground text-xs">{device.lastSeen}</td>
+                      <td className="p-2 md:p-3 text-muted-foreground text-xs">{new Date(device.lastSeen).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -371,20 +383,18 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
           </CardHeader>
           <CardContent>
             <div className="space-y-2 md:space-y-3">
-              {[
-                { type: "warning", message: "Room 102 CO₂ level exceeded threshold (780 ppm)", time: "2 min ago" },
-                { type: "info", message: "Device ESP32-Lab updated successfully", time: "15 min ago" },
-                { type: "success", message: "All fingerprint scanners calibrated", time: "1 hour ago" },
-                { type: "warning", message: "PM2.5 levels rising in Room 105", time: "3 hours ago" },
-              ].map((alert, idx) => (
+              {(alerts || []).length === 0 && (
+                <div className="text-xs md:text-sm text-muted-foreground">No active alerts.</div>
+              )}
+              {(alerts || []).map((alert: any, idx: number) => (
                 <div
                   key={idx}
                   className="flex gap-3 p-2 md:p-3 rounded-lg bg-muted/30 border border-border/50 hover:border-border transition-colors"
                 >
                   <div className="flex-shrink-0 mt-0.5">
-                    {alert.type === "warning" ? (
+                    {alert.severity === "CRITICAL" || alert.severity === "WARNING" ? (
                       <AlertTriangle className="w-4 h-4 text-destructive" />
-                    ) : alert.type === "info" ? (
+                    ) : alert.severity === "INFO" ? (
                       <AlertCircle className="w-4 h-4 text-primary" />
                     ) : (
                       <CheckCircle className="w-4 h-4 text-secondary" />
@@ -392,7 +402,7 @@ export function Dashboard({ isMobileMenuOpen, setIsMobileMenuOpen }: any) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs md:text-sm font-medium text-card-foreground">{alert.message}</p>
-                    <p className="text-xs text-muted-foreground">{alert.time}</p>
+                    <p className="text-xs text-muted-foreground">{new Date(alert.createdAt).toLocaleString()}</p>
                   </div>
                 </div>
               ))}

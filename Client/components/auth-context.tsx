@@ -1,13 +1,14 @@
 "use client"
 
-import { createContext, useContext, useState, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
+import { AuthAPI } from "@/lib/api"
 
 interface User {
   id: string
   email: string
   fullName: string
   schoolName: string
-  role: "admin" | "teacher" | "staff"
+  role: "ADMIN" | "TEACHER" | "STAFF"
 }
 
 interface AuthContextType {
@@ -25,20 +26,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
+  // Load from localStorage on mount
+  useEffect(() => {
+    try {
+      const storedUser = typeof window !== "undefined" ? localStorage.getItem("classtrack:user") : null
+      if (storedUser) {
+        setUser(JSON.parse(storedUser))
+      }
+    } catch {}
+  }, [])
+
   const login = async (email: string, password: string) => {
     setIsLoading(true)
     try {
-      // TODO: Replace with actual API call
-      console.log("[v0] Login API call:", { email })
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      setUser({
-        id: "1",
-        email,
-        fullName: "Admin User",
-        schoolName: "Sample School",
-        role: "admin",
-      })
+      const { user, token } = await AuthAPI.login(email, password)
+      if (typeof window !== "undefined") {
+        localStorage.setItem("classtrack:token", token)
+        localStorage.setItem("classtrack:user", JSON.stringify(user))
+      }
+      setUser(user)
     } finally {
       setIsLoading(false)
     }
@@ -47,23 +53,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signup = async (fullName: string, email: string, schoolName: string, password: string) => {
     setIsLoading(true)
     try {
-      // TODO: Replace with actual API call
-      console.log("[v0] Signup API call:", { fullName, email, schoolName })
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-      setUser({
-        id: "1",
-        email,
-        fullName,
-        schoolName,
-        role: "admin",
-      })
+      const { user, token } = await AuthAPI.signup(fullName, email, schoolName, password)
+      if (typeof window !== "undefined") {
+        localStorage.setItem("classtrack:token", token)
+        localStorage.setItem("classtrack:user", JSON.stringify(user))
+      }
+      setUser(user)
     } finally {
       setIsLoading(false)
     }
   }
 
   const logout = () => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("classtrack:token")
+      localStorage.removeItem("classtrack:user")
+    }
     setUser(null)
   }
 

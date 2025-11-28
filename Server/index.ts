@@ -20,11 +20,12 @@ import deviceRoutes from './src/routes/devices';
 import airQualityRoutes from './src/routes/airquality';
 import alertRoutes from './src/routes/alerts';
 import reportRoutes from './src/routes/reports';
+import adminRoutes from './src/routes/admin';
 
 // Initialize Express app
 const app = express();
 const PORT = process.env.PORT || 5000;
-const WS_PORT = process.env.WS_PORT || 8080;
+const WS_PORT = process.env.WS_PORT || PORT; // Will share HTTP server port if not explicitly set
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
 // Middleware
@@ -50,6 +51,7 @@ app.use('/api/devices', deviceRoutes);
 app.use('/api/airquality', airQualityRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Proxy to Next.js dev server in development, serve static files in production
 if (isDevelopment) {
@@ -116,14 +118,18 @@ app.use('/api/*', (req, res) => {
 // Create HTTP server
 const server = http.createServer(app);
 
-// WebSocket server for ESP32 devices
-const wss = new WebSocketServer({ port: Number(WS_PORT) });
+// WebSocket server for ESP32 devices (attach to existing HTTP server; isolate path to avoid clashing with Next.js HMR websockets)
+const wss = new WebSocketServer({ server, path: '/ws/devices' });
 
 wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress;
   console.log(`[WebSocket] New device connected from ${clientIp}`);
 
-  ws.on('message', (message) => {
+  ws.on('message', (message, isBinary) => {
+    if (isBinary) {
+      // Ignore binary frames from non-IoT clients
+      return;
+    }
     try {
       const data = JSON.parse(message.toString());
       console.log('[WebSocket] Received:', data);
@@ -150,7 +156,7 @@ wss.on('connection', (ws, req) => {
       ws.send(JSON.stringify({ status: 'received', timestamp: new Date().toISOString() }));
     } catch (error) {
       console.error('[WebSocket] Error parsing message:', error);
-      ws.send(JSON.stringify({ status: 'error', message: 'Invalid message format' }));
+      try { ws.send(JSON.stringify({ status: 'error', message: 'Invalid message format' })); } catch {}
     }
   });
 
@@ -178,7 +184,7 @@ server.listen(PORT, () => {
 ╠═══════════════════════════════════════════════════════╣
 ║  Application:      http://localhost:${PORT}              ║
 ║  API Endpoint:     http://localhost:${PORT}/api          ║
-║  WebSocket:        ws://localhost:${WS_PORT}                ║
+║  WebSocket:        ws://localhost:${WS_PORT}/ws/devices     ║
 ║  Environment:      ${process.env.NODE_ENV || 'development'}                       ║
 ║  Mode:             ${isDevelopment ? 'Development (Proxy)    ' : 'Production (Static)     '} ║
 ╚═══════════════════════════════════════════════════════╝
@@ -187,10 +193,11 @@ server.listen(PORT, () => {
   if (isDevelopment) {
     console.log(`
 ✅ DEVELOPMENT MODE (Single Port):
-   - Application proxied from Next.js dev server (port ${process.env.NEXT_DEV_PORT || 3000})
-   - Everything accessible at http://localhost:${PORT}
-   - API at http://localhost:${PORT}/api
-   - Hot reload enabled via proxy
+  - Application proxied from Next.js dev server (port ${process.env.NEXT_DEV_PORT || 3000})
+  - Everything accessible at http://localhost:${PORT}
+  - API at http://localhost:${PORT}/api
+  - WebSocket shares same HTTP port (upgrade) to prevent EACCES issues
+  - Hot reload enabled via proxy
    
 ⚠️  Make sure Next.js dev server is running:
    → npm run dev:client (in another terminal)

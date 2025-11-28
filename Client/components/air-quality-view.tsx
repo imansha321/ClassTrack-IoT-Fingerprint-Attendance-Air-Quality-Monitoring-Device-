@@ -1,29 +1,71 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { AlertTriangle, Wind, Droplets, Thermometer } from "lucide-react"
-
-const hourlyData = [
-  { time: "08:00", pm25: 22, co2: 410, temp: 22.1, humidity: 44 },
-  { time: "09:00", pm25: 28, co2: 480, temp: 22.8, humidity: 46 },
-  { time: "10:00", pm25: 35, co2: 560, temp: 23.4, humidity: 49 },
-  { time: "11:00", pm25: 42, co2: 650, temp: 24.1, humidity: 51 },
-  { time: "12:00", pm25: 48, co2: 720, temp: 24.6, humidity: 53 },
-  { time: "13:00", pm25: 45, co2: 680, temp: 24.4, humidity: 52 },
-  { time: "14:00", pm25: 38, co2: 600, temp: 23.9, humidity: 50 },
-  { time: "15:00", pm25: 32, co2: 540, temp: 23.5, humidity: 48 },
-]
-
-const roomsData = [
-  { name: "Room 101", pm25: 28, co2: 520, temp: 22.8, humidity: 46, quality: "Good" },
-  { name: "Room 102", pm25: 52, co2: 780, temp: 24.9, humidity: 54, quality: "Moderate" },
-  { name: "Room 103", pm25: 31, co2: 550, temp: 23.2, humidity: 48, quality: "Good" },
-  { name: "Lab 104", pm25: 65, co2: 850, temp: 25.2, humidity: 56, quality: "Poor" },
-]
+import { AirQualityAPI, AlertsAPI } from "@/lib/api"
 
 export function AirQualityView() {
+  const [hourlyData, setHourlyData] = useState<any[]>([])
+  const [roomsData, setRoomsData] = useState<any[]>([])
+  const [alerts, setAlerts] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    let active = true
+    ;(async () => {
+      try {
+        setLoading(true)
+        setError("")
+        const [list, rooms, alertList] = await Promise.all([
+          AirQualityAPI.list({ limit: 64 }),
+          AirQualityAPI.rooms(),
+          AlertsAPI.list()
+        ])
+        if (!active) return
+        // Transform list into hourly buckets (group by hour)
+        const byHour: Record<string, any[]> = {}
+        list.forEach((reading: any) => {
+          const d = new Date(reading.timestamp)
+          const hourLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+          byHour[hourLabel] = byHour[hourLabel] || []
+          byHour[hourLabel].push(reading)
+        })
+        const hourly = Object.keys(byHour).sort().map(h => {
+          const arr = byHour[h]
+          const avg = (key: string) => (arr.reduce((sum, r) => sum + (r[key] ?? 0), 0) / arr.length)
+          return { time: h, pm25: Math.round(avg('pm25')), co2: Math.round(avg('co2')), temp: parseFloat(avg('temperature').toFixed(1)), humidity: Math.round(avg('humidity')) }
+        })
+        setHourlyData(hourly)
+        setRoomsData(rooms.map((r: any) => ({
+          name: r.name,
+            pm25: r.latest?.pm25 ?? 0,
+            co2: r.latest?.co2 ?? 0,
+            temp: r.latest?.temperature ?? 0,
+            humidity: r.latest?.humidity ?? 0,
+            quality: qualityFromMetrics(r.latest)
+        })))
+        setAlerts(alertList.slice(0,5))
+      } catch (e: any) {
+        if (!active) return
+        setError(e?.message || 'Failed to load air quality data')
+      } finally {
+        if (active) setLoading(false)
+      }
+    })()
+    return () => { active = false }
+  }, [])
+
+  function qualityFromMetrics(reading: any) {
+    if (!reading) return 'Unknown'
+    if (reading.co2 > 800 || reading.pm25 > 55) return 'Poor'
+    if (reading.co2 > 700 || reading.pm25 > 35) return 'Moderate'
+    return 'Good'
+  }
+  const currentAvg = hourlyData.slice(-1)[0]
   return (
     <div className="p-8 space-y-8">
       {/* Header */}
@@ -34,10 +76,10 @@ export function AirQualityView() {
 
       {/* Current Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <QualityMetric label="PM2.5" value="42 µg/m³" unit="(Moderate)" icon={Wind} warning={true} />
-        <QualityMetric label="CO₂" value="680 ppm" unit="(High)" icon={AlertTriangle} warning={true} />
-        <QualityMetric label="Temperature" value="24.2°C" unit="(Optimal)" icon={Thermometer} />
-        <QualityMetric label="Humidity" value="51%" unit="(Good)" icon={Droplets} />
+        <QualityMetric label="PM2.5" value={currentAvg ? `${currentAvg.pm25} µg/m³` : '—'} unit="" icon={Wind} warning={currentAvg ? currentAvg.pm25 > 35 : false} />
+        <QualityMetric label="CO₂" value={currentAvg ? `${currentAvg.co2} ppm` : '—'} unit="" icon={AlertTriangle} warning={currentAvg ? currentAvg.co2 > 700 : false} />
+        <QualityMetric label="Temperature" value={currentAvg ? `${currentAvg.temp}°C` : '—'} unit="" icon={Thermometer} />
+        <QualityMetric label="Humidity" value={currentAvg ? `${currentAvg.humidity}%` : '—'} unit="" icon={Droplets} />
       </div>
 
       {/* Charts */}
@@ -127,6 +169,9 @@ export function AirQualityView() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {loading && <p className="text-sm text-muted-foreground">Loading rooms...</p>}
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            {!loading && !error && roomsData.length === 0 && <p className="text-sm text-muted-foreground">No room data.</p>}
             {roomsData.map((room) => (
               <div
                 key={room.name}
@@ -184,24 +229,15 @@ export function AirQualityView() {
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {[
-              { room: "Lab 104", metric: "CO₂", value: "850 ppm", threshold: "800 ppm", severity: "critical" },
-              { room: "Room 102", metric: "PM2.5", value: "52 µg/m³", threshold: "50 µg/m³", severity: "warning" },
-              { room: "Room 102", metric: "CO₂", value: "780 ppm", threshold: "750 ppm", severity: "warning" },
-            ].map((alert, idx) => (
+            {loading && <p className="text-sm text-muted-foreground">Loading alerts...</p>}
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            {!loading && alerts.length === 0 && !error && <p className="text-sm text-muted-foreground">No active alerts.</p>}
+            {alerts.map((alert, idx) => (
               <div key={idx} className="flex items-center gap-4 p-3 rounded-lg bg-card/50 border border-border">
-                <div
-                  className={`w-3 h-3 rounded-full flex-shrink-0 ${
-                    alert.severity === "critical" ? "bg-destructive" : "bg-accent"
-                  }`}
-                />
+                <div className={`w-3 h-3 rounded-full flex-shrink-0 ${alert.severity === 'CRITICAL' ? 'bg-destructive' : 'bg-accent'}`} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground">
-                    {alert.room}: {alert.metric} exceeds threshold
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Current: {alert.value} → Threshold: {alert.threshold}
-                  </p>
+                  <p className="text-sm font-medium text-foreground">{alert.roomName || alert.device?.location || 'Room'}: {alert.metric || alert.type} exceeds threshold</p>
+                  <p className="text-xs text-muted-foreground">Recorded: {alert.value ?? '—'} {alert.unit ?? ''}</p>
                 </div>
               </div>
             ))}
@@ -217,17 +253,19 @@ export function AirQualityView() {
         </CardHeader>
         <CardContent>
           <ul className="space-y-2 text-sm">
-            {[
-              "Open windows in Room 102 and Lab 104 for 10-15 minutes",
-              "Activate ventilation system in Lab 104 - CO₂ levels critical",
-              "Check air filter status in Room 102",
-              "Schedule HVAC maintenance for next week",
-            ].map((rec, idx) => (
-              <li key={idx} className="flex items-start gap-3 text-foreground">
-                <span className="text-secondary mt-1">✓</span>
-                <span>{rec}</span>
-              </li>
-            ))}
+            {(roomsData.slice(0,4) || []).map((room, idx) => {
+              const rec = room.quality === 'Poor'
+                ? `Improve ventilation in ${room.name} - high levels detected`
+                : room.quality === 'Moderate'
+                  ? `Monitor ${room.name}; consider airing out`
+                  : `Maintain current conditions in ${room.name}`
+              return (
+                <li key={idx} className="flex items-start gap-3 text-foreground">
+                  <span className="text-secondary mt-1">✓</span>
+                  <span>{rec}</span>
+                </li>
+              )
+            })}
           </ul>
         </CardContent>
       </Card>
