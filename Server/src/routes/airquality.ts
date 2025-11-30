@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { body } from 'express-validator';
 import prisma from '../config/database';
-import { authenticateToken } from '../middleware/auth';
+import { authenticateToken, authenticateDeviceToken, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import { AlertType, AlertSeverity } from '@prisma/client';
 
@@ -178,6 +178,78 @@ router.post(
       res.status(201).json(reading);
     } catch (error) {
       console.error('Record air quality error:', error);
+      res.status(500).json({ error: 'Failed to record air quality' });
+    }
+  }
+);
+
+// Record air quality reading using device token (ESP32)
+router.post(
+  '/device',
+  [
+    authenticateDeviceToken,
+    body('room').notEmpty().withMessage('Room is required'),
+    body('pm25').isFloat({ min: 0 }).withMessage('PM2.5 must be a positive number'),
+    body('co2').isInt({ min: 0 }).withMessage('CO2 must be a positive integer'),
+    body('temperature').isFloat().withMessage('Temperature must be a number'),
+    body('humidity').isFloat({ min: 0, max: 100 }).withMessage('Humidity must be between 0 and 100'),
+    validate,
+  ],
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { room, pm25, co2, temperature, humidity } = req.body;
+      const tokenDeviceId = req.device?.deviceId;
+
+      if (!tokenDeviceId) {
+        return res.status(401).json({ error: 'Device token missing deviceId' });
+      }
+
+      const device = await prisma.device.findUnique({ where: { deviceId: tokenDeviceId } });
+      if (!device) {
+        return res.status(404).json({ error: 'Device not found' });
+      }
+
+      const reading = await prisma.airQuality.create({
+        data: {
+          deviceId: device.id,
+          room,
+          pm25,
+          co2,
+          temperature,
+          humidity,
+        },
+      });
+
+      const alerts = [] as any[];
+      if (co2 > 800) {
+        alerts.push({
+          type: AlertType.AIR_QUALITY,
+          severity: co2 > 1000 ? AlertSeverity.CRITICAL : AlertSeverity.WARNING,
+          message: `${room} CO₂ level ${co2 > 1000 ? 'critical' : 'exceeded threshold'} (${co2} ppm)`,
+          room,
+          metric: 'CO₂',
+          value: `${co2} ppm`,
+          threshold: '800 ppm',
+        });
+      }
+      if (pm25 > 50) {
+        alerts.push({
+          type: AlertType.AIR_QUALITY,
+          severity: pm25 > 75 ? AlertSeverity.CRITICAL : AlertSeverity.WARNING,
+          message: `${room} PM2.5 level ${pm25 > 75 ? 'critical' : 'exceeded threshold'} (${pm25.toFixed(1)} µg/m³)`,
+          room,
+          metric: 'PM2.5',
+          value: `${pm25.toFixed(1)} µg/m³`,
+          threshold: '50 µg/m³',
+        });
+      }
+      if (alerts.length > 0) {
+        await prisma.alert.createMany({ data: alerts });
+      }
+
+      res.status(201).json(reading);
+    } catch (error) {
+      console.error('Record air quality (device) error:', error);
       res.status(500).json({ error: 'Failed to record air quality' });
     }
   }

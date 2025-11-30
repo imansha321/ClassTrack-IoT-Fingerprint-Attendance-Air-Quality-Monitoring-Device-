@@ -101,6 +101,12 @@ export const DevicesAPI = {
   delete(id: string) {
     return apiFetch(`/api/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
   },
+  provision(data: { deviceId: string }) {
+    return apiFetch<{ deviceToken: string }>(`/api/devices/provision`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
 };
 
 export const AdminAPI = {

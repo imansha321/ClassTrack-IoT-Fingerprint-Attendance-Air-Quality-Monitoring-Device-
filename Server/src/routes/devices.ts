@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { body } from 'express-validator';
 import prisma from '../config/database';
-import { authenticateToken } from '../middleware/auth';
+import { authenticateToken, authenticateDeviceToken, generateDeviceToken } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 
 const router = Router();
@@ -139,20 +139,32 @@ router.post(
   '/status',
   [
     body('deviceId').notEmpty().withMessage('Device ID is required'),
-    body('battery').isInt({ min: 0, max: 100 }).withMessage('Battery must be between 0 and 100'),
-    body('signal').isInt({ min: 0, max: 100 }).withMessage('Signal must be between 0 and 100'),
+    body('battery').optional().isInt({ min: 0, max: 100 }).withMessage('Battery must be between 0 and 100'),
+    // WiFi RSSI is typically negative dBm; accept wide range
+    body('signal').optional().isInt({ min: -120, max: 0 }).withMessage('Signal (RSSI dBm) must be between -120 and 0'),
     validate,
   ],
+  // Accept either user token or device token
   async (req: Request, res: Response) => {
     try {
-      const { deviceId, battery, signal, uptime } = req.body;
+      const { deviceId, battery, signal, uptime, status } = req.body;
 
-      const device = await prisma.device.findUnique({
+      let device = await prisma.device.findUnique({
         where: { deviceId },
       });
 
       if (!device) {
-        return res.status(404).json({ error: 'Device not found' });
+        // Auto-register unknown device with minimal info
+        device = await prisma.device.create({
+          data: {
+            deviceId,
+            name: deviceId,
+            type: 'MULTI_SENSOR',
+            location: 'Unassigned',
+            status: 'ONLINE',
+            firmwareVersion: 'unknown',
+          },
+        });
       }
 
       const updated = await prisma.device.update({
@@ -161,7 +173,7 @@ router.post(
           battery,
           signal,
           uptime,
-          status: 'ONLINE',
+          status: (status || 'ONLINE').toUpperCase(),
           lastSeen: new Date(),
         },
       });
@@ -170,6 +182,44 @@ router.post(
     } catch (error) {
       console.error('Update device status error:', error);
       res.status(500).json({ error: 'Failed to update device status' });
+    }
+  }
+);
+
+// Provision device: user-authenticated, returns a device token for runtime
+router.post(
+  '/provision',
+  authenticateToken,
+  [
+    body('deviceId').notEmpty().withMessage('Device ID is required'),
+    body('name').optional().isString(),
+    body('type').optional().isIn(['FINGERPRINT_SCANNER', 'MULTI_SENSOR', 'AIR_QUALITY_SENSOR']),
+    body('location').optional().isString(),
+    validate,
+  ],
+  async (req: Request, res: Response) => {
+    try {
+      const { deviceId, name, type, location } = req.body;
+
+      let device = await prisma.device.findUnique({ where: { deviceId } });
+      if (!device) {
+        device = await prisma.device.create({
+          data: {
+            deviceId,
+            name: name || deviceId,
+            type: (type as any) || 'MULTI_SENSOR',
+            location: location || 'Unassigned',
+            status: 'OFFLINE',
+            firmwareVersion: 'unknown',
+          },
+        });
+      }
+
+      const deviceToken = generateDeviceToken({ deviceId });
+      res.json({ deviceToken, device });
+    } catch (error) {
+      console.error('Provision device error:', error);
+      res.status(500).json({ error: 'Failed to provision device' });
     }
   }
 );

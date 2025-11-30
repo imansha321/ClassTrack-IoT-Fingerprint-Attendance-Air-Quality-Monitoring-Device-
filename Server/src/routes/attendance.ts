@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { body } from 'express-validator';
 import prisma from '../config/database';
-import { authenticateToken } from '../middleware/auth';
+import { authenticateToken, authenticateDeviceToken, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 
 const router = Router();
@@ -104,6 +104,61 @@ router.post(
       res.status(201).json(attendance);
     } catch (error) {
       console.error('Record attendance error:', error);
+      res.status(500).json({ error: 'Failed to record attendance' });
+    }
+  }
+);
+
+// Record attendance using device token (ESP32)
+router.post(
+  '/device',
+  [
+    authenticateDeviceToken,
+    body('studentId').notEmpty().withMessage('Student ID is required'),
+    body('fingerprintMatch').isBoolean().withMessage('Fingerprint match must be boolean'),
+    validate,
+  ],
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { studentId, fingerprintMatch, reliability } = req.body;
+      const tokenDeviceId = req.device?.deviceId;
+
+      if (!tokenDeviceId) {
+        return res.status(401).json({ error: 'Device token missing deviceId' });
+      }
+
+      const student = await prisma.student.findUnique({ where: { studentId } });
+      if (!student) {
+        return res.status(404).json({ error: 'Student not found' });
+      }
+
+      const device = await prisma.device.findUnique({ where: { deviceId: tokenDeviceId } });
+      if (!device) {
+        return res.status(404).json({ error: 'Device not found' });
+      }
+
+      const now = new Date();
+      const hour = now.getHours();
+      const minute = now.getMinutes();
+      const timeInMinutes = hour * 60 + minute;
+      const cutoffTime = 8 * 60 + 30; // 8:30 AM
+      const status = timeInMinutes <= cutoffTime ? 'PRESENT' : 'LATE';
+
+      const attendance = await prisma.attendance.create({
+        data: {
+          studentId: student.id,
+          deviceId: device.id,
+          checkInTime: now,
+          status,
+          fingerprintMatch,
+          reliability: reliability || 98,
+        },
+        include: { student: true },
+      });
+
+      res.status(201).json(attendance);
+    } catch (error) {
+      console.error('Record attendance (device) error:', error);
       res.status(500).json({ error: 'Failed to record attendance' });
     }
   }
