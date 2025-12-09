@@ -1,5 +1,9 @@
 # Stage 1 - Build TS
 FROM node:18-alpine AS builder
+
+# Install dependencies for Prisma
+RUN apt-get update && apt-get install -y libssl1.1
+
 WORKDIR /app
 
 COPY package*.json ./
