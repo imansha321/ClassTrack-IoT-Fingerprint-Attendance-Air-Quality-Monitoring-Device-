@@ -1,0 +1,50 @@
+name: Deploy Fullstack App
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Build SERVER image
+        run: |
+          cd Server
+          docker build -t server_app:latest .
+
+      - name: Build CLIENT image
+        run: |
+          cd Client
+          docker build -t client_app:latest .
+
+      - name: Save images to TAR
+        run: |
+          docker save server_app:latest > server.tar
+          docker save client_app:latest > client.tar
+
+      - name: Transfer images to backend
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          source: "*.tar"
+          target: "~/multiapp/"
+
+      - name: Deploy on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          script: |
+            cd ~/multiapp
+            docker load < server.tar
+            docker load < client.tar
+            docker-compose down
+            docker-compose up -d --force-recreate
