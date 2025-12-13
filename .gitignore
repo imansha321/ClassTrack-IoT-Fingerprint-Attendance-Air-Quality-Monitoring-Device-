@@ -1,6 +1,8 @@
 # Node modules
 node_modules/
 
+docker-compose.yml 
+
 # Client and Server node_modules (monorepo)
 Client/node_modules/
 Server/node_modules/
