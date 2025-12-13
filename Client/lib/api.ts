@@ -1,4 +1,4 @@
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://167.71.235.91:5000";
 
 const SCHOOL_CONTEXT_KEY = "classtrack:schoolId";
 
